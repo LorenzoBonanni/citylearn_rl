@@ -172,3 +172,20 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# IDE settings
+.vscode/
+.idea/
+
+# Project-specific directories and files
+CityLearn.egg-info/
+build/
+logs/
+tests/
+plots/
+plot/
+
+# Additional build directories
+dist/
+*.egg-info/
+
