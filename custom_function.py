@@ -101,7 +101,7 @@ def test_rbc(env, n=1):
     kpis = cp.get_kpis(env)
     return kpis, env
 
-def test_sac(env, n=1, episodes=EPISODES):
+def train_sac(env, n=1, episodes=EPISODES):
     sac_model = SAC(policy='MlpPolicy',
                     env=env,
                     **CUSTOM_AGENT_KWARGS,
@@ -115,12 +115,14 @@ def test_sac(env, n=1, episodes=EPISODES):
         sac_model.learn(
             total_timesteps=episodes*(env.unwrapped.time_steps - 1),
             reset_num_timesteps=False,
-            callback=callback
+            callback=callback,
+            progress_bar=True
         )
 
     observations, _ = env.reset()
     sac_actions_list = []
 
+    # Al termine dell'allenamento, esegui il modello per raccogliere le azioni
     while not env.unwrapped.terminated:
         actions, _ = sac_model.predict(observations, deterministic=False)
         observations, _, _, _, _ = env.step(actions)
@@ -297,7 +299,7 @@ def create_custom_building_env(temperature_offset=0.0, scale_factor=1.0, reward_
     CityLearnEnv - Un nuovo ambiente con edifici personalizzati
     """
     # Creiamo prima un ambiente standard per ottenere gli edifici originali
-    standard_env = CityLearnEnv(**env)
+    env = CityLearnEnv(**env)
     
     env_config = {**ENV_CONFIG}
     if reward_function == None:
@@ -305,72 +307,76 @@ def create_custom_building_env(temperature_offset=0.0, scale_factor=1.0, reward_
     else:
         env_config['reward_function'] = reward_function
 
-    if 'buildings' in env_config:
-        env_config.pop('buildings')
     
-    env = CityLearnEnv(**env_config, buildings=[])
+    # env.observation_names
+
+    # if 'buildings' in env_config:
+    #     env_config.pop('buildings')
+    
+    # env = CityLearnEnv(**env_config, buildings=[])
     
     # Creiamo gli edifici personalizzati basati su quelli originali
-    custom_buildings = []
+    # custom_buildings = []
 
-    for building in standard_env.buildings:
-        if isinstance(building, LSTMDynamicsBuilding):
-            building_args = {
-                'energy_simulation': building.energy_simulation,
-                'weather': building.weather,
-                'observation_metadata': building.observation_metadata,
-                'action_metadata': building.action_metadata,
-                'episode_tracker': building.episode_tracker,
-                'carbon_intensity': building.carbon_intensity,
-                'pricing': building.pricing,
-                'dhw_storage': building.dhw_storage,
-                'cooling_storage': building.cooling_storage,
-                'heating_storage': building.heating_storage,
-                'electrical_storage': building.electrical_storage,
-                'dhw_device': building.dhw_device,
-                'cooling_device': building.cooling_device,
-                'heating_device': building.heating_device,
-                'pv': building.pv,
-                'name': building.name,
-                'dynamics': LSTMDynamics(filepath=building.dynamics.filepath,
-                                input_observation_names=building.dynamics.input_observation_names,
-                                input_normalization_minimum=building.dynamics.input_normalization_minimum,
-                                input_normalization_maximum=building.dynamics.input_normalization_maximum,
-                                hidden_size=building.dynamics.hidden_size,
-                                num_layers=building.dynamics.num_layers,
-                                lookback=building.dynamics.lookback,
-                                input_size=building.dynamics.input_size),
-                'electric_vehicle_chargers': [] if building.electric_vehicle_chargers is None else building.electric_vehicle_chargers,
-            }
-            if custom_model is None:
-                custom_model = CustomLSTMDynamicsBuilding
-                custom_building = custom_model(**building_args, temperature_offset=temperature_offset,
-                                                dynamics_params={'scale_factor': scale_factor})
-            elif custom_model == NoisyLSTMDynamicsBuilding:
-                building_noisy_args = {
-                    'noise_level': noise_level,
-                    'noise_mean': noise_mean,
-                    'apply_noise_to': ACTIVE_OBSERVATIONS,
-                    'noise_type': 'gaussian',
-                    'seed': 1
-                }
-                custom_building = custom_model(**building_args, **building_noisy_args)
-            elif custom_model == AdaptiveLSTMDynamicsBuilding:
-                building_adaptive_args = {
-                    'adaptation_rate': adaptation_rate,
-                    'blend_weight': blend_weight,
-                    'window_size': window_size
-                }
-                custom_building = custom_model(**building_args, **building_adaptive_args)
+    # for building in standard_env.buildings:
+    #     if isinstance(building, LSTMDynamicsBuilding):
+    #         building_args = {
+    #             'energy_simulation': building.energy_simulation,
+    #             'weather': building.weather,
+    #             'observation_metadata': building.observation_metadata,
+    #             'action_metadata': building.action_metadata,
+    #             'episode_tracker': building.episode_tracker,
+    #             'carbon_intensity': building.carbon_intensity,
+    #             'pricing': building.pricing,
+    #             'dhw_storage': building.dhw_storage,
+    #             'cooling_storage': building.cooling_storage,
+    #             'heating_storage': building.heating_storage,
+    #             'electrical_storage': building.electrical_storage,
+    #             'dhw_device': building.dhw_device,
+    #             'cooling_device': building.cooling_device,
+    #             'heating_device': building.heating_device,
+    #             'pv': building.pv,
+    #             'name': building.name,
+    #             'dynamics': LSTMDynamics(filepath=building.dynamics.filepath,
+    #                             input_observation_names=building.dynamics.input_observation_names,
+    #                             input_normalization_minimum=building.dynamics.input_normalization_minimum,
+    #                             input_normalization_maximum=building.dynamics.input_normalization_maximum,
+    #                             hidden_size=building.dynamics.hidden_size,
+    #                             num_layers=building.dynamics.num_layers,
+    #                             lookback=building.dynamics.lookback,
+    #                             input_size=building.dynamics.input_size),
+    #             'electric_vehicle_chargers': [] if building.electric_vehicle_chargers is None else building.electric_vehicle_chargers,
+    #         }
+    #         if custom_model is None:
+    #             custom_model = CustomLSTMDynamicsBuilding
+    #             custom_building = custom_model(**building_args, temperature_offset=temperature_offset,
+    #                                             dynamics_params={'scale_factor': scale_factor})
+    #         elif custom_model == NoisyLSTMDynamicsBuilding:
+    #             building_noisy_args = {
+    #                 'noise_level': noise_level,
+    #                 'noise_mean': noise_mean,
+    #                 'apply_noise_to': ACTIVE_OBSERVATIONS,
+    #                 'noise_type': 'gaussian',
+    #                 'seed': 1
+    #             }
+    #             custom_building = custom_model(**building_args, **building_noisy_args)
+    #         elif custom_model == AdaptiveLSTMDynamicsBuilding:
+    #             building_adaptive_args = {
+    #                 'adaptation_rate': adaptation_rate,
+    #                 'blend_weight': blend_weight,
+    #                 'window_size': window_size
+    #             }
+    #             custom_building = custom_model(**building_args, **building_adaptive_args)
 
-            custom_buildings.append(custom_building)
-        else:
-            # Manteniamo l'edificio originale, ma assicuriamoci che electric_vehicle_chargers sia una lista
-            if hasattr(building, 'electric_vehicle_chargers') and building.electric_vehicle_chargers is None:
-                building.electric_vehicle_chargers = []
-            custom_buildings.append(building)
+    #         custom_buildings.append(custom_building)
+    #     else:
+    #         # Manteniamo l'edificio originale, ma assicuriamoci che electric_vehicle_chargers sia una lista
+    #         if hasattr(building, 'electric_vehicle_chargers') and building.electric_vehicle_chargers is None:
+    #             building.electric_vehicle_chargers = []
+    #         custom_buildings.append(building)
     
-    env.buildings = custom_buildings
+    # env.buildings = custom_buildings
+
     env.reset()
         
     return env
