@@ -24,12 +24,12 @@ if __name__ == "__main__":
     print("Inizio simulazione SAC standard")
     env_2 = CityLearnEnv(**ENV_CONFIG)
     sac_env_2 = StableBaselines3Wrapper(NormalizedObservationWrapper(env_2))
-    sac_env_2, sac_model_2 = test_sac(sac_env_2)
+    sac_env_2, sac_model_2 = train_sac(sac_env_2)
 
     print("Inizio simulazione SAC + RBC standard")
     env_2_rbc = CityLearnEnv(**ENV_CONFIG)
     sac_env_2_rbc = StableBaselines3Wrapper(NormalizedObservationWrapper(env_2_rbc))
-    sac_env_2_rbc, sac_model_2_rbc = test_sac(sac_env_2_rbc, n=2)
+    sac_env_2_rbc, sac_model_2_rbc = train_sac(sac_env_2_rbc, n=2)
 
     # print("Inizio simulazione SAC con edifici più caldi (+2°C)")
     # env_3 = create_custom_building_env(temperature_offset=2.0, scale_factor=1.0)
@@ -44,12 +44,12 @@ if __name__ == "__main__":
     print("Inizio simulazione SAC con edifici Noisy")
     env_noisy = create_custom_building_env(custom_model=NoisyLSTMDynamicsBuilding)
     sac_env_noisy = StableBaselines3Wrapper(NormalizedObservationWrapper(env_noisy))
-    sac_env_noisy, sac_model_noisy = test_sac(sac_env_noisy)
+    sac_env_noisy, sac_model_noisy = train_sac(sac_env_noisy)
 
     print("Inizio simulazione SAC + RBC con edifici Noisy")
     env_noisy_rbc = create_custom_building_env(custom_model=NoisyLSTMDynamicsBuilding)
     sac_env_noisy_rbc = StableBaselines3Wrapper(NormalizedObservationWrapper(env_noisy_rbc))
-    sac_env_noisy_rbc, sac_model_noisy_rbc = test_sac(sac_env_noisy_rbc, n=2)
+    sac_env_noisy_rbc, sac_model_noisy_rbc = train_sac(sac_env_noisy_rbc, n=2)
 
     envs = {
         'Baseline': base_env,

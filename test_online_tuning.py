@@ -1,10 +1,45 @@
+from functools import partial
 from custom_function import *
-from stable_baselines3.common.callbacks import BaseCallback
 import os
-import gymnasium as gym
 import numpy as np
-from gymnasium import spaces
+from gymnasium.wrappers import TransformObservation
 from adaptive_building import AdaptiveLSTMDynamicsBuilding
+from tempfile import TemporaryDirectory
+from stable_baselines3 import SAC
+
+
+def add_noise_to_observations(observations, noise_level=0.15, noise_mean=0.0, noise_type='gaussian'):
+    """
+    Aggiunge rumore alle osservazioni in base al tipo di rumore specificato.
+    
+    Parametri:
+    observations: np.ndarray - Osservazioni originali
+    noise_level: float - Livello di rumore da aggiungere
+    noise_mean: float - Media del rumore (solo per rumore gaussiano)
+    noise_type: str - Tipo di rumore ('gaussian' o 'uniform')
+    seed: int - Semenza per la riproducibilità
+    Returns:
+    np.ndarray - Osservazioni con rumore aggiunto
+    """    
+    noisy_observations = observations.copy()
+
+    for i, observation in enumerate(observations):
+        # non aggiungre rumoore a 'day_type', 'hour', 'occupant_count', 'power_outage', 'indoor_dry_bulb_temperature_cooling_set_point'
+        mask = np.zeros_like(noisy_observations[i], dtype=bool)
+        # active_observations: ['day_type', 'hour', 'outdoor_dry_bulb_temperature', 'outdoor_dry_bulb_temperature_predicted_1', 'outdoor_dry_bulb_temperature_predicted_2', 'outdoor_dry_bulb_temperature_predicted_3', 'diffuse_solar_irradiance', 'diffuse_solar_irradiance_predicted_1', 'diffuse_solar_irradiance_predicted_2', 'diffuse_solar_irradiance_predicted_3', 'direct_solar_irradiance', 'direct_solar_irradiance_predicted_1', 'direct_solar_irradiance_predicted_2', 'direct_solar_irradiance_predicted_3', 'carbon_intensity', 'indoor_dry_bulb_temperature', 'non_shiftable_load', 'solar_generation', 'dhw_storage_soc', 'electrical_storage_soc', 'net_electricity_consumption', 'electricity_pricing', 'electricity_pricing_predicted_1', 'electricity_pricing_predicted_2', 'electricity_pricing_predicted_3', 'cooling_demand', 'dhw_demand', 'occupant_count', 'power_outage', 'indoor_dry_bulb_temperature_cooling_set_point']
+        indices = [0, 1, -1, -2, -3]
+        mask[indices] = True  # Indici delle osservazioni da non modificare
+
+        if noise_type == 'gaussian':
+            noise = np.random.normal(loc=noise_mean, scale=noise_level, size=len(observation))
+        elif noise_type == 'uniform':
+            noise = np.random.uniform(low=-noise_level, high=noise_level, size=len(observation))
+        else:
+            raise ValueError(f"Tipo di rumore '{noise_type}' non supportato.")
+        noisy_observations[i] += noise
+        # Mantieni le osservazioni originali dove necessario
+        noisy_observations[i][mask] = np.array(observations)[i][mask] # Mantieni le osservazioni originali dove necessario
+    return noisy_observations
 
 def train_and_transfer_sac():
     """
@@ -14,14 +49,11 @@ def train_and_transfer_sac():
     print("Fase 1: Addestramento iniziale su ambiente standard")
 
     # Ambiente di training iniziale
-    train_env = create_custom_building_env(custom_model=NoisyLSTMDynamicsBuilding, noise_level=0.15)
-    train_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(train_env))
+    train_env = CityLearnEnv(**ENV_CONFIG)
+    train_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(TransformObservation(train_env, partial(add_noise_to_observations, noise_type='gaussian', noise_level=0.15, noise_mean=0.0))))
     # Addestramento SAC iniziale
-    train_env, sac_model = test_sac(train_env)
+    _, sac_model = train_sac(train_env)
     # Crea una vera copia del modello originale usando save e load
-    import os
-    from tempfile import TemporaryDirectory
-    
     # Crea una directory temporanea
     with TemporaryDirectory() as temp_dir:
         # Salva il modello originale
@@ -29,13 +61,12 @@ def train_and_transfer_sac():
         sac_model.save(original_model_path)
         
         # Carica una vera copia del modello
-        from stable_baselines3 import SAC
         sac_original = SAC.load(original_model_path)
 
     print("Fase 2: Test e fine-tuning online su ambiente reale (diverso)")
     
     # Ambiente di test/applicazione (ambiente "reale" diverso)
-    test_env = CityLearnEnv(**ENV_CONFIG_2)  
+    test_env = CityLearnEnv(**ENV_CONFIG)  
     test_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(test_env))
 
     print(f"Fine-tuning online per {test_env.unwrapped.time_steps-1} passi temporali")
@@ -50,42 +81,34 @@ def train_and_transfer_sac():
         verbose=1,
     )
     
-    print("Fase 3: Creazione e valutazione di un modello SAC con edifici adattivi")
-    adaptive_b_env = create_custom_building_env(custom_model=AdaptiveLSTMDynamicsBuilding)
-    adaptive_b_env= StableBaselines3Wrapper(NormalizedSpaceWrapper(adaptive_b_env))
-    adaptive_b_env, sac_adaptive = test_sac(adaptive_b_env)
-    
     #ambiente con molto rumore
     print("Fase 5: Test di un modello SAC con rumore")
-    noisy_env = create_custom_building_env(custom_model=NoisyLSTMDynamicsBuilding, noise_level=0.45)
-    noisy_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(noisy_env))
-    noisy_env, sac_noisy = test_sac(noisy_env)
+    train_env = CityLearnEnv(**ENV_CONFIG)
+    train_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(TransformObservation(train_env, partial(add_noise_to_observations, noise_type='gaussian', noise_level=0.45, noise_mean=0.0))))
+    _, sac_noisy = train_sac(train_env)
 
     #ambiente con media modificata
     print("Fase 6: Test di un modello SAC con media modificata")
-    noisy_mean_env = create_custom_building_env(custom_model=NoisyLSTMDynamicsBuilding, noise_mean=1)
-    noisy_mean_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(noisy_mean_env))
-    noisy_mean_env, sac_noisy_mean = test_sac(noisy_mean_env)
+    train_env = CityLearnEnv(**ENV_CONFIG)
+    train_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(TransformObservation(train_env, partial(add_noise_to_observations, noise_type='gaussian', noise_level=0.15, noise_mean=1.0))))
+    _, sac_noisy_mean = train_sac(train_env)
 
     # Ambiente di valutazione standard
-    eval_env = CityLearnEnv(**ENV_CONFIG_3)
+    eval_env = CityLearnEnv(**ENV_CONFIG)
     eval_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(eval_env))
     
     # Valuta i 4 modelli
     print("\nValutazione del modello originale senza adattamenti:")
-    final_original_eval = evaluate_sac_performance_robust(eval_env, sac_original, "SAC-Original")
+    final_original_eval = evaluate_sac_performance_robust(eval_env, sac_original, "SAC-Noisy")
     
     print("\nValutazione del modello con fine-tuning tradizionale:")
-    final_real_eval = evaluate_sac_performance_robust(eval_env, sac_model, "SAC-Transfer-Finetuned-Real")
+    final_real_eval = evaluate_sac_performance_robust(eval_env, sac_model, "SAC-Noisy-Finetuned")
     
     print("\nValutazione del modello con rumore:")
-    final_noisy_eval = evaluate_sac_performance_robust(eval_env, sac_noisy, "SAC-Transfer-Finetuned-Noisy")
+    final_noisy_eval = evaluate_sac_performance_robust(eval_env, sac_noisy, "SAC-High-Noisy")
 
     print("\nValutazione del modello con media modificata:")
-    final_noisy_mean_eval = evaluate_sac_performance_robust(eval_env, sac_noisy_mean, "SAC-Transfer-Finetuned-Noisy-Mean")
-
-    print("\nValutazione del modello con edifici adattivi:")
-    final_adaptive_eval = evaluate_sac_performance_robust(eval_env, sac_adaptive, "SAC-Adaptive-Building")
+    final_noisy_mean_eval = evaluate_sac_performance_robust(eval_env, sac_noisy_mean, "SAC-Noisy-Mean")
     
     # restituisco performance dei diversi ambienti
     results = {
@@ -93,14 +116,12 @@ def train_and_transfer_sac():
         "original_env": final_original_eval,
         "noisy_env": final_noisy_eval,
         "noisy_mean_env": final_noisy_mean_eval,
-        "adaptive_env": final_adaptive_eval,
     }
 
     print_model_params(sac_original, "SAC-Original")
     print_model_params(sac_model, "SAC-Fine-tuned") 
     print_model_params(sac_noisy, "SAC-Noisy")
     print_model_params(sac_noisy_mean, "SAC-Noisy-Mean")
-    print_model_params(sac_adaptive, "SAC-Adaptive-Building")
     
     return results
 
