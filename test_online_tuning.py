@@ -52,7 +52,7 @@ def train_and_transfer_sac():
     train_env = CityLearnEnv(**ENV_CONFIG)
     train_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(TransformObservation(train_env, partial(add_noise_to_observations, noise_type='gaussian', noise_level=0.15, noise_mean=0.0))))
     # Addestramento SAC iniziale
-    train_env, sac_model = train_sac(train_env)
+    _, sac_model = train_sac(train_env)
     # Crea una vera copia del modello originale usando save e load
     # Crea una directory temporanea
     with TemporaryDirectory() as temp_dir:
@@ -85,13 +85,13 @@ def train_and_transfer_sac():
     print("Fase 5: Test di un modello SAC con rumore")
     train_env = CityLearnEnv(**ENV_CONFIG)
     train_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(TransformObservation(train_env, partial(add_noise_to_observations, noise_type='gaussian', noise_level=0.45, noise_mean=0.0))))
-    noisy_env, sac_noisy = train_sac(noisy_env)
+    _, sac_noisy = train_sac(train_env)
 
     #ambiente con media modificata
     print("Fase 6: Test di un modello SAC con media modificata")
     train_env = CityLearnEnv(**ENV_CONFIG)
     train_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(TransformObservation(train_env, partial(add_noise_to_observations, noise_type='gaussian', noise_level=0.15, noise_mean=1.0))))
-    noisy_mean_env, sac_noisy_mean = train_sac(noisy_mean_env)
+    _, sac_noisy_mean = train_sac(train_env)
 
     # Ambiente di valutazione standard
     eval_env = CityLearnEnv(**ENV_CONFIG)
