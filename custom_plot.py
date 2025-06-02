@@ -502,13 +502,14 @@ def plot_reward_summary(envs: dict[str, list[float]], save_dir='plots'):
     plt.savefig(f"{save_dir}/rewards_comparison.png", bbox_inches='tight', dpi=300)
     plt.show()
 
-def plot_post_training_rewards(evaluation_results, save_dir='plots'):
+def plot_post_training_rewards(evaluation_results, save_dir='plots', title_suffix=""):
     """
     Visualizza l'andamento delle ricompense e delle azioni dopo il training.
     
     Parametri:
     evaluation_results: dict - Dizionario che mappa il nome dell'agente ai risultati della valutazione
     save_dir: str - Directory dove salvare i grafici generati
+    title_suffix: str - Suffisso da aggiungere al titolo del grafico
     """
     ensure_dir(save_dir)
     
@@ -521,12 +522,20 @@ def plot_post_training_rewards(evaluation_results, save_dir='plots'):
     
     ax.set_xlabel('Time step')
     ax.set_ylabel('Reward')
-    ax.set_title('Confronto ricompense per passo')
+    ax.set_title(f'Confronto ricompense per passo{title_suffix}')
     ax.legend(loc='best')
     ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig(f"{save_dir}/post_training_rewards.png", bbox_inches='tight', dpi=300)
+    
+    # Nome file personalizzato se c'è un suffisso
+    filename_base = "post_training_rewards"
+    if title_suffix and "Original" in title_suffix:
+        filename_base = "post_training_rewards_original"
+    elif title_suffix and "Finetuned" in title_suffix:
+        filename_base = "post_training_rewards_finetuned"
+    
+    plt.savefig(f"{save_dir}/{filename_base}.png", bbox_inches='tight', dpi=300)
     plt.show()
     
     # Secondo grafico: distribuzione cumulativa delle ricompense
@@ -539,10 +548,218 @@ def plot_post_training_rewards(evaluation_results, save_dir='plots'):
     
     ax.set_xlabel('Time step')
     ax.set_ylabel('Cumulative Reward')
-    ax.set_title('Ricompense cumulative')
+    ax.set_title(f'Ricompense cumulative{title_suffix}')
     ax.legend(loc='best')
     ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig(f"{save_dir}/post_training_cumulative_rewards.png", bbox_inches='tight', dpi=300)
+    
+    # Nome file personalizzato per il cumulativo
+    cumulative_filename = "post_training_cumulative_rewards"
+    if title_suffix and "Original" in title_suffix:
+        cumulative_filename = "post_training_cumulative_rewards_original"
+    elif title_suffix and "Finetuned" in title_suffix:
+        cumulative_filename = "post_training_cumulative_rewards_finetuned"
+    
+    plt.savefig(f"{save_dir}/{cumulative_filename}.png", bbox_inches='tight', dpi=300)
+    plt.show()
+
+def plot_training_evolution(training_evolution_dict, save_dir=None, filename="training_evolution.png"):
+    """
+    Plotta l'evoluzione delle reward DURANTE il training
+    
+    Parametri:
+    training_evolution_dict: dict - Dizionario con rewards e timesteps per ogni modello
+    save_dir: str - Directory dove salvare il grafico
+    filename: str - Nome del file del grafico
+    """
+    plt.figure(figsize=(12, 8))
+    
+    colors = ['blue', 'red', 'green', 'orange']
+    labels = {
+        'noisy': 'Modello con Poco Rumore',
+        'more_noisy': 'Modello con Molto Rumore', 
+        'noisy_mean': 'Modello con Media Modificata'
+    }
+    
+    for i, (model_name, data) in enumerate(training_evolution_dict.items()):
+        if 'rewards' in data and 'timesteps' in data:
+            rewards = data['rewards']
+            timesteps = data['timesteps']
+            
+            plt.plot(timesteps, rewards, 
+                    color=colors[i % len(colors)], 
+                    label=labels.get(model_name, model_name),
+                    linewidth=2,
+                    marker='o',
+                    markersize=4)
+    
+    plt.title('Evoluzione delle Reward DURANTE il Training', fontsize=16, fontweight='bold')
+    plt.xlabel('Timesteps di Training', fontsize=12)
+    plt.ylabel('Reward Totale per Episodio di Valutazione', fontsize=12)
+    plt.legend(fontsize=11)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    if save_dir:
+        ensure_dir(save_dir)
+        filepath = os.path.join(save_dir, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        print(f"Grafico di evoluzione del training salvato: {filepath}")
+    
+    plt.show()
+    
+def plot_training_and_final_comparison(evaluation_results, training_evolution_dict, save_dir=None):
+    """
+    Crea un grafico combinato che mostra sia l'evoluzione durante il training
+    che le performance finali
+    
+    Parametri:
+    evaluation_results: dict - Risultati finali dei modelli
+    training_evolution_dict: dict - Evoluzione durante il training
+    save_dir: str - Directory dove salvare i grafici
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # Grafico 1: Evoluzione durante il training
+    colors = ['blue', 'red', 'green', 'orange']
+    labels = {
+        'noisy': 'Poco Rumore',
+        'more_noisy': 'Molto Rumore', 
+        'noisy_mean': 'Media Modificata'
+    }
+    
+    for i, (model_name, data) in enumerate(training_evolution_dict.items()):
+        if 'rewards' in data and 'timesteps' in data:
+            rewards = data['rewards']
+            timesteps = data['timesteps']
+            
+            ax1.plot(timesteps, rewards, 
+                    color=colors[i % len(colors)], 
+                    label=labels.get(model_name, model_name),
+                    linewidth=2,
+                    marker='o',
+                    markersize=4)
+    
+    ax1.set_title('Evoluzione DURANTE il Training', fontsize=14, fontweight='bold')
+    ax1.set_xlabel('Timesteps di Training', fontsize=12)
+    ax1.set_ylabel('Reward di Valutazione', fontsize=12)
+    ax1.legend(fontsize=10)
+    ax1.grid(True, alpha=0.3)
+    
+    # Grafico 2: Performance finali
+    model_names = list(evaluation_results.keys())
+    final_rewards = [evaluation_results[name]['total_reward'] for name in model_names]
+    
+    bars = ax2.bar(model_names, final_rewards, 
+                   color=[colors[i % len(colors)] for i in range(len(model_names))],
+                   alpha=0.7)
+    
+    ax2.set_title('Performance Finali (Ambiente Pulito)', fontsize=14, fontweight='bold')
+    ax2.set_ylabel('Reward Totale', fontsize=12)
+    ax2.grid(True, alpha=0.3, axis='y')
+    
+    # Aggiungi valori sopra le barre
+    for bar, reward in zip(bars, final_rewards):
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
+                f'{reward:.1f}', ha='center', va='bottom', fontweight='bold')
+    
+    plt.tight_layout()
+    
+    if save_dir:
+        ensure_dir(save_dir)
+        filepath = os.path.join(save_dir, "training_and_final_comparison.png")
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        print(f"Grafico combinato salvato: {filepath}")
+    
+    plt.show()
+
+def plot_online_fine_tuning_simple(online_results, save_dir=None, title="Online Fine-tuning Progress"):
+    """
+    Crea un grafico semplice per mostrare solo l'evoluzione del fine-tuning online
+    
+    Parametri:
+    online_results: dict - Risultati del fine-tuning online da simple_online_learning
+    save_dir: str - Directory dove salvare il grafico
+    title: str - Titolo del grafico
+    """
+    plt.figure(figsize=(12, 6))
+    
+    # Estrai i dati dalle reward
+    step_rewards = online_results['step_rewards']
+    total_reward = online_results['total_reward']
+    
+    # Converti rewards in valori numerici se necessario
+    try:
+        if isinstance(step_rewards[0], (np.ndarray, list)):
+            rewards_numeric = [float(np.mean(r)) if hasattr(r, '__len__') else float(r) for r in step_rewards]
+        else:
+            rewards_numeric = [float(r) for r in step_rewards]
+    except (IndexError, TypeError, ValueError):
+        rewards_numeric = step_rewards
+    
+    # Crea gli step temporali
+    timesteps = list(range(len(rewards_numeric)))
+    
+    # Plot principale
+    plt.plot(timesteps, rewards_numeric, 
+             color='green', 
+             linewidth=2, 
+             marker='o', 
+             markersize=2,
+             label=f'Online Fine-tuning (Total: {total_reward:.2f})')
+    
+    # Calcola e plotta la media mobile per mostrare il trend
+    if len(rewards_numeric) > 10:
+        window_size = min(50, len(rewards_numeric) // 10)
+        moving_avg = []
+        for i in range(len(rewards_numeric)):
+            start_idx = max(0, i - window_size + 1)
+            end_idx = i + 1
+            avg = np.mean(rewards_numeric[start_idx:end_idx])
+            moving_avg.append(avg)
+        
+        plt.plot(timesteps, moving_avg, 
+                 color='red', 
+                 linewidth=3, 
+                 alpha=0.7,
+                 label=f'Trend (media mobile)')
+    
+    # Aggiungi linea orizzontale per la media totale
+    avg_reward = np.mean(rewards_numeric)
+    plt.axhline(y=avg_reward, 
+                color='orange', 
+                linestyle='--', 
+                alpha=0.8,
+                label=f'Media totale: {avg_reward:.3f}')
+    
+    plt.title(title, fontsize=16, fontweight='bold')
+    plt.xlabel('Passi di Interazione', fontsize=12)
+    plt.ylabel('Reward per Passo', fontsize=12)
+    plt.legend(fontsize=11)
+    plt.grid(True, alpha=0.3)
+    
+    # Aggiungi statistiche come testo
+    stats_text = f"""Statistiche Fine-tuning Online:
+• Reward totale: {total_reward:.2f}
+• Reward medio: {avg_reward:.3f}
+• Reward min: {min(rewards_numeric):.3f}
+• Reward max: {max(rewards_numeric):.3f}
+• Passi totali: {len(rewards_numeric)}"""
+    
+    plt.text(0.02, 0.98, stats_text, 
+             transform=plt.gca().transAxes, 
+             fontsize=10,
+             verticalalignment='top',
+             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+    
+    plt.tight_layout()
+    
+    if save_dir:
+        ensure_dir(save_dir)
+        filepath = os.path.join(save_dir, "online_fine_tuning_simple.png")
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        print(f"Grafico del fine-tuning online salvato: {filepath}")
+    
     plt.show()

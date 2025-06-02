@@ -2,11 +2,50 @@ import os
 from citylearn.dynamics import LSTMDynamics
 import numpy as np
 from stable_baselines3 import SAC
+from stable_baselines3.common.buffers import ReplayBuffer
 import matplotlib.pyplot as plt
 from tempfile import TemporaryDirectory
-from constants import ENV_CONFIG_3
+from constants import BATCH_SIZE, LEARNING_STARTS, EPISODES, RANDOM_SEED
 from config import *
 from adaptive_building import AdaptiveLSTMDynamicsBuilding
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+from stable_baselines3.common.logger import configure
+
+def add_noise_to_observations(observations, noise_level=0.15, noise_mean=0.0, noise_type='gaussian'):
+    """
+    Aggiunge rumore alle osservazioni in base al tipo di rumore specificato.
+    
+    Parametri:
+    observations: np.ndarray - Osservazioni originali
+    noise_level: float - Livello di rumore da aggiungere
+    noise_mean: float - Media del rumore (solo per rumore gaussiano)
+    noise_type: str - Tipo di rumore ('gaussian' o 'uniform')
+    
+    Returns:
+    np.ndarray - Osservazioni con rumore aggiunto
+    """    
+    noisy_observations = observations.copy()
+
+    for i, observation in enumerate(observations):
+        # Non aggiungere rumore a specifiche osservazioni
+        mask = np.zeros_like(noisy_observations[i], dtype=bool)
+        indices = [0, 1, 2, -1, -2, -3, -4]  # day_type, hour, occupant_count, power_outage, cooling_set_point
+        mask[indices] = True
+
+        if noise_type == 'gaussian':
+            noise = np.random.normal(loc=noise_mean, scale=noise_level, size=len(observation))
+        elif noise_type == 'uniform':
+            noise = np.random.uniform(low=-noise_level, high=noise_level, size=len(observation))
+        else:
+            raise ValueError(f"Tipo di rumore '{noise_type}' non supportato.")
+        #print(f"PRE Noise {noise} Observation: {noisy_observations[i]}")
+        noisy_observations[i] += noise
+        #print(f"SOMMA Noise {noise} Observation: {noisy_observations[i]}")
+        # Mantieni le osservazioni originali dove necessario
+        noisy_observations[i][mask] = np.array(observations)[i][mask]
+        #print(f"POST Noise {noise} Observation: {noisy_observations[i]}")
+    
+    return noisy_observations
 
 def override_action_value(action_map, action_key, value, hours=None):
     """
@@ -101,46 +140,80 @@ def test_rbc(env, n=1):
     kpis = cp.get_kpis(env)
     return kpis, env
 
-def train_sac(env, n=1, episodes=EPISODES):
-    sac_model = SAC(policy='MlpPolicy',
+def train_sac(env, sac_model=None, n=1, batch_size=BATCH_SIZE, learning_starts=LEARNING_STARTS, episodes=EPISODES, seed=RANDOM_SEED, time_steps=None, track_rewards=False, eval_freq=1000, deterministic=True):
+    if sac_model is None:
+        sac_model = SAC(policy='MlpPolicy',
                     env=env,
                     **CUSTOM_AGENT_KWARGS,
+                    seed=seed,
                     verbose=1)
-    if n==1:
-        callback=None
-    elif n==2:
-        callback = RBCPureCallback(env,verbose=0)
+    else:
+        sac_model.set_env(env)
+        if batch_size != sac_model.batch_size:
+            sac_model.batch_size = batch_size
 
-    for i in tqdm(range(episodes)):
-        sac_model.learn(
-            total_timesteps=episodes*(env.unwrapped.time_steps - 1),
-            reset_num_timesteps=False,
-            callback=callback,
-            progress_bar=True
-        )
-
-    observations, _ = env.reset()
-    sac_actions_list = []
-
-    # Al termine dell'allenamento, esegui il modello per raccogliere le azioni
-    while not env.unwrapped.terminated:
-        actions, _ = sac_model.predict(observations, deterministic=False)
-        observations, _, _, _, _ = env.step(actions)
-        sac_actions_list.append(actions)
+    if time_steps is None:
+        time_steps = env.unwrapped.time_steps - 1
         
-        current_step = env.unwrapped.time_step - 1  
-        
-        if current_step % 50 == 0 or env.unwrapped.terminated:
-            print(f"\n--- Timestep {current_step} ---")
-            for b_idx, building in enumerate(env.unwrapped.buildings):
-                if hasattr(building, 'indoor_dry_bulb_temperature') and current_step >= 0:
-                    try:
-                        temp = float(np.ravel(building.indoor_dry_bulb_temperature)[current_step])
-                        print(f"Building {b_idx}, Indoor temperature: {temp:.2f}°C")
-                    except (IndexError, AttributeError) as e:
-                        print(f"Could not retrieve temperature for Building {b_idx}: {e}")
+    callback = None
+    reward_tracker = None
     
-    return env, sac_model
+    if n == 2:
+        callback = RBCPureCallback(env, verbose=0)
+    
+    # Setup callback per tracciare reward durante training
+    if track_rewards:
+        # Crea un ambiente di valutazione pulito (senza rumore)
+        eval_env = CityLearnEnv(**ENV_CONFIG)
+        eval_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(eval_env))
+        
+        reward_tracker = SimpleRewardTracker(
+            eval_env=eval_env, 
+            eval_freq=eval_freq,
+            verbose=1
+        )
+        
+        # Combina i callback se necessario
+        if callback is not None:
+            callback = CallbackList([callback, reward_tracker])
+        else:
+            callback = reward_tracker
+
+    total_timesteps = episodes * time_steps
+    
+    env.reset()
+    sac_model.learn(
+        total_timesteps=total_timesteps,
+        reset_num_timesteps=False,
+        callback=callback,
+        progress_bar=True
+    )
+    # sac_model.set_logger(configure(folder=None, format_strings=['stdout']))
+    # observations, _= env.reset()
+    # total_reward = 0
+    # step = 0
+    # step_rewards = []
+    # terminated = False
+    # truncated = False
+
+    # while not terminated and not truncated:
+    #     action, _ = sac_model.predict(observations, deterministic=deterministic)
+    #     next_obs, reward, terminated, truncated, info = env.step(action)
+    #     step += 1
+    #     total_reward += reward
+    #     step_rewards.append(reward)
+    #     sac_model.replay_buffer.add(observations, next_obs, action, reward, terminated, [info])
+    #     if step > batch_size and step > learning_starts:
+    #         sac_model.train(gradient_steps=1,batch_size=batch_size)
+
+    
+    #     observations = next_obs
+
+    # Restituisci le reward di training se richiesto
+    if track_rewards and reward_tracker:
+        return env, sac_model, reward_tracker.training_rewards, reward_tracker.timesteps_evaluated
+    else:
+        return env, sac_model
 
 def evaluate_sac_performance(env, sac_model, episode_name="Model"):
     """
@@ -381,317 +454,42 @@ def create_custom_building_env(temperature_offset=0.0, scale_factor=1.0, reward_
         
     return env
 
-def create_and_run_adaptive_building_experiment(sac_original):
+def simple_online_learning(env, model, update_freq=10, batch_size=10, gradient_steps=4, verbose=1, deterministic=True):
     """
-    Crea e valuta un modello SAC con adaptive buildings, esegue la simulazione e raccoglie le metriche.
-    Restituisce sac_adaptive, adaptive_env, adaptation_metrics
-    """
-    # Crea una seconda copia del modello originale per gli edifici adattivi
-    with TemporaryDirectory() as temp_dir:
-        adaptive_model_path = os.path.join(temp_dir, "sac_adaptive.zip")
-        sac_original.save(adaptive_model_path)
-        sac_adaptive = SAC.load(adaptive_model_path)
-    adaptive_env = create_custom_building_env(
-        custom_model=AdaptiveLSTMDynamicsBuilding,
-        adaptation_rate=0.05,
-        blend_weight=0.8,
-        window_size=100
-    )
-    if adaptive_env is None:
-        print("ERRORE: Non è stato possibile creare l'ambiente con edifici adattivi.")
-        return sac_adaptive, None, None
-    adaptive_env = StableBaselines3Wrapper(NormalizedObservationWrapper(adaptive_env))
-    observations, _ = adaptive_env.reset()
-    obs_shape = observations.shape[0] if hasattr(observations, 'shape') else len(observations)
-    expected_shape = sac_adaptive.observation_space.shape[0]
-    if obs_shape > expected_shape:
-        if isinstance(observations, np.ndarray):
-            observations = observations[:expected_shape]
-        elif isinstance(observations, (list, tuple)):
-            observations = type(observations)(list(observations)[:expected_shape])
-    elif obs_shape < expected_shape:
-        if isinstance(observations, np.ndarray):
-            pad_width = expected_shape - obs_shape
-            observations = np.concatenate([observations, np.zeros(pad_width, dtype=observations.dtype)])
-        elif isinstance(observations, list):
-            observations = observations + [0.0] * (expected_shape - obs_shape)
-        elif isinstance(observations, tuple):
-            observations = tuple(list(observations) + [0.0] * (expected_shape - obs_shape))
-        else:
-            observations = [0.0] * expected_shape
-    total_steps = min(2000, adaptive_env.unwrapped.time_steps-1)
-    adaptation_metrics = []
-    for step in range(total_steps):
-        obs_shape = observations.shape[0] if hasattr(observations, 'shape') else len(observations)
-        expected_shape = sac_adaptive.observation_space.shape[0]
-        if obs_shape > expected_shape:
-            if isinstance(observations, np.ndarray):
-                observations = observations[:expected_shape]
-            elif isinstance(observations, (list, tuple)):
-                observations = type(observations)(list(observations)[:expected_shape])
-        elif obs_shape < expected_shape:
-            if isinstance(observations, np.ndarray):
-                pad_width = expected_shape - obs_shape
-                observations = np.concatenate([observations, np.zeros(pad_width, dtype=observations.dtype)])
-            elif isinstance(observations, list):
-                observations = observations + [0.0] * (expected_shape - obs_shape)
-            elif isinstance(observations, tuple):
-                observations = tuple(list(observations) + [0.0] * (expected_shape - obs_shape))
-            else:
-                observations = [0.0] * expected_shape
-        action, _ = sac_adaptive.predict(observations, deterministic=True)
-        action_shape = action.shape[0] if hasattr(action, 'shape') else len(action)
-        expected_action_shape = adaptive_env.action_space.shape[0]
-        if action_shape > expected_action_shape:
-            if isinstance(action, np.ndarray):
-                action = action[:expected_action_shape]
-            elif isinstance(action, (list, tuple)):
-                action = type(action)(list(action)[:expected_action_shape])
-        elif action_shape < expected_action_shape:
-            if isinstance(action, np.ndarray):
-                pad_width = expected_action_shape - action_shape
-                action = np.concatenate([action, np.zeros(pad_width, dtype=action.dtype)])
-            elif isinstance(action, list):
-                action = action + [0.0] * (expected_action_shape - action_shape)
-            elif isinstance(action, tuple):
-                action = tuple(list(action) + [0.0] * (expected_action_shape - action_shape))
-            else:
-                action = [0.0] * expected_action_shape
-        observations, rewards, terminated, truncated, info = adaptive_env.step(action)
-        if step % 100 == 0:
-            metrics = {}
-            try:
-                for i, building in enumerate(adaptive_env.unwrapped.buildings):
-                    if hasattr(building, 'get_adaptation_metrics'):
-                        building_metrics = building.get_adaptation_metrics()
-                        metrics[f"building_{i+1}"] = building_metrics
-                adaptation_metrics.append((step, metrics))
-            except Exception as e:
-                print(f"Errore nella raccolta delle metriche di adattamento: {e}")
+    Vero online fine-tuning: aggiorna il modello ogni pochi passi durante l'interazione
+    """        
+    model.set_logger(configure(folder=None, format_strings=['stdout']))
+    observations, _= env.reset()
+    total_reward = 0
+    step = 0
+    step_rewards = []
+    terminated = False
+    truncated = False
+
+    while not terminated and not truncated:
+        action, _ = model.predict(observations, deterministic=deterministic)
+        next_obs, reward, terminated, truncated, info = env.step(action)
+        step += 1
+        total_reward += reward
+        step_rewards.append(reward)
+        model.replay_buffer.add(observations, next_obs, action, reward, terminated, [info])
+        if step % update_freq == 0 and step > 0:
+            for _ in range(gradient_steps):
+                model.train(gradient_steps=gradient_steps,batch_size=batch_size)
+                
+            if verbose:
+                print(f"Step {step}: Modello aggiornato. Reward totale: {total_reward:.2f}")
+    
+        observations = next_obs
+        
         if terminated or truncated:
             break
-    return sac_adaptive, adaptive_env, adaptation_metrics
-
-def evaluate_adaptive_building_model(sac_adaptive):
-    """
-    Valuta il modello SAC con adaptive buildings su un ambiente di test e restituisce le metriche finali.
-    """
-    adaptive_eval_env = create_adaptive_building_env(
-        ENV_CONFIG_3.copy(),
-        adaptation_rate=0.05,
-        blend_weight=0.8,
-        window_size=100
-    )
-    if adaptive_eval_env is None:
-        print("ERRORE: Non è stato possibile creare l'ambiente adattivo per la valutazione finale.")
-        return {
-            "name": "SAC-Adaptive-Building",
-            "total_reward": float('nan'),
-            "step_rewards": np.array([]),
-            "actions": []
-        }, None
-    adaptive_eval_env = StableBaselines3Wrapper(NormalizedObservationWrapper(adaptive_eval_env))
-    final_adaptive_eval = evaluate_sac_performance_robust(adaptive_eval_env, sac_adaptive, "SAC-Adaptive-Building")
-    final_adaptation_metrics = {}
-    try:
-        for i, building in enumerate(adaptive_eval_env.unwrapped.buildings):
-            if hasattr(building, 'get_adaptation_metrics'):
-                metrics = building.get_adaptation_metrics()
-                final_adaptation_metrics[f"building_{i+1}"] = metrics
-    except Exception as e:
-        print(f"Errore nell'estrazione delle metriche di adattamento finali: {e}")
-    return final_adaptive_eval, final_adaptation_metrics
-
-def create_adaptive_building_env(config_dict, adaptation_rate=0.05, blend_weight=0.8, window_size=100):
-    """
-    Crea un ambiente CityLearn con edifici adattivi che aggiornano il loro modello di transizione.
-    Args:
-        config_dict: Dizionario di configurazione dell'ambiente
-        adaptation_rate: Tasso di adattamento del modello
-        blend_weight: Peso iniziale del modello originale (1.0 = solo originale, 0.0 = solo nuovo)
-        window_size: Dimensione della finestra di osservazioni per l'apprendimento
-    Returns:
-        CityLearnEnv: Ambiente con edifici adattivi
-    """
-    from citylearn.citylearn import CityLearnEnv
-    from adaptive_building import AdaptiveLSTMDynamicsBuilding
-    # Estrai parametri di configurazione
-    schema_name = config_dict.get('schema')
-    building_ids = config_dict.get('buildings')
-    simulation_start_time_step = config_dict.get('simulation_start_time_step', 0)
-    simulation_end_time_step = config_dict.get('simulation_end_time_step', 8760)
-    active_observations = config_dict.get('active_observations', [])
-    central_agent = config_dict.get('central_agent', False)
-    try:
-        temp_env = CityLearnEnv(**config_dict)
-        adaptive_buildings = []
-        for i, building_id in enumerate(building_ids):
-            try:
-                original_building = temp_env.buildings[i]
-                if hasattr(original_building, 'dynamics') and original_building.dynamics is not None:
-                    orig_dynamics = original_building.dynamics
-                    adaptive_building = AdaptiveLSTMDynamicsBuilding(
-                        buildingId=original_building.name,
-                        weather=original_building.weather,
-                        dhw_storage=original_building.dhw_storage,
-                        cooling_storage=original_building.cooling_storage,
-                        dynamics=orig_dynamics,
-                        adaptation_rate=adaptation_rate,
-                        blend_weight=blend_weight,
-                        window_size=window_size,
-                        observation_metadata=original_building.observation_metadata,
-                        action_metadata=original_building.action_metadata,
-                        carbon_intensity=original_building.carbon_intensity,
-                        pricing=original_building.pricing,
-                        seconds_per_time_step=original_building.seconds_per_time_step,
-                        random_seed=original_building.random_seed,
-                        episode_tracker=original_building.episode_tracker,
-                        simulate_power_outage=original_building.simulate_power_outage
-                    )
-                    adaptive_building.observation_space = original_building.observation_space
-                    adaptive_building.action_space = original_building.action_space
-                    adaptive_buildings.append(adaptive_building)
-                else:
-                    return None
-            except Exception:
-                return None
-        if not adaptive_buildings:
-            return None
-        env = CityLearnEnv(
-            buildings=adaptive_buildings,
-            schema=schema_name,
-            central_agent=central_agent,
-            simulation_start_time_step=simulation_start_time_step,
-            simulation_end_time_step=simulation_end_time_step,
-            active_observations=active_observations if active_observations else None
-        )
-        return env
-    except Exception:
-        return None
-
-def simple_online_learning(env, model, n_steps=5000, update_freq=100, batch_size=64, 
-                           gradient_steps=10, verbose=1, episodes=EPISODES):
-    """
-    Esegue un ciclo di apprendimento online semplice con aggiornamento periodico del modello.
     
-    Args:
-        env: L'ambiente di interazione
-        model: Il modello RL pre-addestrato (es. SAC)
-        n_steps: Numero totale di passi di interazione PER EPISODIO
-        update_freq: Frequenza di aggiornamento del modello
-        batch_size: Dimensione del batch per l'aggiornamento
-        gradient_steps: Numero di passi di gradiente ad ogni aggiornamento
-        verbose: Livello di verbosità
-        episodes: Numero di episodi di training
-        
-    Returns:
-        performance_history: Lista di tuple (step, reward) che tracciano la performance
-    """
-    from tqdm import tqdm
-    import matplotlib.pyplot as plt
-    
-    # Configura il buffer di esperienza con le dimensioni corrette
-    if hasattr(model, 'replay_buffer'):
-        try:
-            from stable_baselines3.common.buffers import ReplayBuffer
-            
-            # Ottieni dimensioni dallo spazio di osservazione e azione
-            obs_dim = env.observation_space.shape[0] if len(env.observation_space.shape) > 0 else 1
-            action_dim = env.action_space.shape[0] if len(env.action_space.shape) > 0 else 1
-            
-            # Crea un nuovo buffer con le dimensioni corrette
-            new_buffer = ReplayBuffer(
-                buffer_size=model.replay_buffer.buffer_size,
-                observation_space=env.observation_space,
-                action_space=env.action_space,
-                device=model.device,
-                n_envs=1,
-                optimize_memory_usage=model.replay_buffer.optimize_memory_usage
-            )
-            
-            # Sostituisci il buffer esistente
-            model.replay_buffer = new_buffer
-            print("Buffer di replay ricreato con le dimensioni corrette.")
-        except Exception as e:
-            print(f"Impossibile ricreare il buffer di replay: {e}")
-    
-    performance_history = []
-    total_steps = episodes * n_steps
-    
-    # Barra di progresso principale per tutti gli episodi
-    pbar = tqdm(total=total_steps, desc="Online Learning")
-    
-    global_step = 0
-    total_reward_all_episodes = 0
-    
-    # Ciclo principale per episodi
-    for episode in range(episodes):
-        # Reset dell'ambiente per nuovo episodio
-        observations, _ = env.reset()
-        episode_reward = 0
-        
-        # Ciclo per steps all'interno dell'episodio
-        for step in range(1, n_steps + 1):
-            try:
-                global_step += 1
-                
-                # Predici l'azione (usa deterministic=False per esplorare durante l'apprendimento)
-                action, _ = model.predict(observations, deterministic=True)
-                
-                # Esegui l'azione
-                next_obs, reward, terminated, truncated, info = env.step(action)
-                
-                # Calcola reward totale per questo passo
-                step_reward = float(np.mean(reward) if hasattr(reward, 'shape') else reward)
-                episode_reward += step_reward
-                total_reward_all_episodes += step_reward
-                
-                # Aggiungi l'esperienza al buffer di replay
-                if hasattr(model, 'replay_buffer'):
-                    model.replay_buffer.add(
-                        observations,
-                        next_obs,
-                        action,
-                        reward,
-                        terminated or truncated,
-                        [info]
-                    )
-                
-                # Aggiorna il modello periodicamente
-                if global_step % update_freq == 0 and global_step > batch_size:
-                    if verbose > 0:
-                        avg_reward = total_reward_all_episodes / global_step
-                        pbar.set_description(f"Ep {episode+1}/{episodes} - Avg Reward: {avg_reward:.2f}")
-                    
-                    model.train(gradient_steps=gradient_steps, batch_size=batch_size)
-            
-                observations = next_obs
-                pbar.update(1)
-                
-                # Se l'episodio termina naturalmente, interrompi il loop interno
-                if terminated or truncated:
-                    if verbose > 0:
-                        pbar.set_description(f"Ep {episode+1}/{episodes} completed - Ep Reward: {episode_reward:.2f}")
-                    break
-                    
-            except Exception as e:
-                print(f"Errore all'episodio {episode+1}, passo {step}: {e}")
-                continue
-        
-        # Traccia le performance alla fine di ogni episodio
-        performance_history.append((global_step, episode_reward))
-        
-        if verbose > 0:
-            print(f"\nEpisodio {episode+1}/{episodes} completato - Reward: {episode_reward:.2f}")
-    
-    pbar.close()
-    
-    print(f"\nApprendimento online completato:")
-    print(f"- Episodi: {episodes}")
-    print(f"- Passi totali: {global_step}")
-    print(f"- Reward medio per episodio: {total_reward_all_episodes/episodes:.2f}")
-    
-    return performance_history
+    return {
+        'total_reward': total_reward,
+        'step_rewards': step_rewards,
+        'final_observations': observations
+    }
 
 def evaluate_model_performance(env, model, n_episodes=3, deterministic=True, evaluation_length=None):
     """
@@ -707,32 +505,25 @@ def evaluate_model_performance(env, model, n_episodes=3, deterministic=True, eva
     Returns:
         mean_reward: La ricompensa media su tutti gli episodi
     """
-    # Crea un nuovo ambiente per la valutazione
     eval_env = env
     if evaluation_length is None:
-        evaluation_length = min((env.unwrapped.time_steps - 1)/4,200)
+        evaluation_length = env.unwrapped.time_steps - 1
 
-    # Esegui n_episodes e calcola la ricompensa media
-    episode_rewards = []
-    for _ in range(n_episodes):
-        obs, _ = eval_env.reset()
-        episode_reward = 0
-        done = False
-        
-        steps = 0
-        while not done and (evaluation_length is None or steps < evaluation_length):
-            action, _ = model.predict(obs, deterministic=deterministic)
-            obs, reward, terminated, truncated, _ = eval_env.step(action)
-            episode_reward += float(np.mean(reward) if hasattr(reward, 'shape') else reward)
-            done = terminated or truncated
-            steps += 1
-            
-        episode_rewards.append(episode_reward)
+    obs, _ = eval_env.reset()
+    episode_reward = 0
+    done = False
     
-    # Calcola e restituisci la ricompensa media
-    return sum(episode_rewards) / n_episodes
+    steps = 0
+    while not done and (evaluation_length is None or steps < evaluation_length):
+        action, _ = model.predict(obs, deterministic=deterministic)
+        obs, reward, terminated, truncated, _ = eval_env.step(action)
+        episode_reward += float(np.mean(reward) if hasattr(reward, 'shape') else reward)
+        done = terminated or truncated
+        steps += 1
+        
+    
+    return episode_reward
 
-# Dopo l'allenamento di ogni modello, stampa alcuni parametri
 def print_model_params(model, name):
     """Stampa alcuni parametri del modello per verificare le differenze"""
     try:
@@ -756,3 +547,39 @@ def performance_evaluation(first_reward, second_reward, model_name):
             print(f"→ Il modello {model_name} ha MIGLIORATO le prestazioni del {abs(improvement_ft):.2f}%")
         else:
             print(f"→ Il modello {model_name} ha PEGGIORATO le prestazioni del {abs(improvement_ft):.2f}%")
+
+class SimpleRewardTracker(BaseCallback):
+    """
+    Callback semplice per tracciare le reward durante il training
+    è una valutazione veloce che si esegue ogni eval_freq timesteps sempre sui primi max_steps.    
+    """
+    def __init__(self, eval_env, eval_freq=1000, verbose=0):
+        super().__init__(verbose)
+        self.eval_env = eval_env
+        self.eval_freq = eval_freq
+        self.training_rewards = []
+        self.timesteps_evaluated = []
+        
+    def _on_step(self) -> bool:
+        # Valuta ogni eval_freq timesteps
+        if self.n_calls % self.eval_freq == 0:
+            obs, _ = self.eval_env.reset()
+            episode_reward = 0
+            steps = 0
+            max_steps = min(self.eval_env.unwrapped.time_steps, 100)  # Valutazione veloce
+            
+            while not self.eval_env.terminated and steps < max_steps:
+                action, _ = self.model.predict(obs, deterministic=True)
+                obs, reward, terminated, truncated, _ = self.eval_env.step(action)
+                episode_reward += float(np.mean(reward) if hasattr(reward, 'shape') else reward)
+                steps += 1
+                if terminated or truncated:
+                    break
+                    
+            self.training_rewards.append(episode_reward)
+            self.timesteps_evaluated.append(self.n_calls)
+            
+            if self.verbose > 0:
+                print(f"Timestep {self.n_calls}: Reward = {episode_reward:.2f}")
+        
+        return True

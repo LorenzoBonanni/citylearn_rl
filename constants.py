@@ -22,15 +22,18 @@ ACTIVE_ACTIONS = ['electrical_storage', 'cooling_storage_soc', 'heating_storage_
 CENTRAL_AGENT = True
 
 # Altre costanti condivise
-EPISODES = 10
+EPISODES = 2
 SAVE_DIR = 'plots'
 UPDATE_FREQ = 75
+BATCH_SIZE = 256
+LEARNING_STARTS = 150
+RANDOM_SEED = 42
 
 # Configurazione di ENV_CONFIG e ENV_CONFIG_2
 ENV_CONFIG = {
     "schema": 'citylearn_challenge_2023_phase_1',
     "central_agent": CENTRAL_AGENT,
-    'reward_function': SolarPenaltyAndComfortReward
+    'reward_function': SolarPenaltyAndComfortReward,
 }
 
 ENV_CONFIG_2 = {
@@ -54,6 +57,6 @@ CUSTOM_AGENT_KWARGS = {
     "tau": 0.005,
     "gamma": 0.99,
     "buffer_size": 10000,
-    "learning_starts": 256,
-    "batch_size": 256,
+	"batch_size": BATCH_SIZE,
+    "learning_starts": LEARNING_STARTS,
 }
