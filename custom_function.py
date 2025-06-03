@@ -24,26 +24,28 @@ def add_noise_to_observations(observations, noise_level=0.15, noise_mean=0.0, no
     Returns:
     np.ndarray - Osservazioni con rumore aggiunto
     """    
-    noisy_observations = observations.copy()
+    obs = np.array(observations)
+    noisy_observations = obs.copy()
+    #stampe di debug
+    #print(noisy_observations[0])
 
-    for i, observation in enumerate(observations):
-        # Non aggiungere rumore a specifiche osservazioni
-        mask = np.zeros_like(noisy_observations[i], dtype=bool)
-        indices = [0, 1, 2, -1, -2, -3, -4]  # day_type, hour, occupant_count, power_outage, cooling_set_point
-        mask[indices] = True
+    # Non aggiungere rumore a specifiche osservazioni
+    mask = np.zeros_like(noisy_observations, dtype=bool)
+    #stampe di debug
+    #print("maschera:")
+    #print(mask)
+    indices = [0, 1, 2, -1, -2, -3, -4]  # day_type, hour, occupant_count, power_outage, cooling_set_point
+    mask[indices] = True
 
-        if noise_type == 'gaussian':
-            noise = np.random.normal(loc=noise_mean, scale=noise_level, size=len(observation))
-        elif noise_type == 'uniform':
-            noise = np.random.uniform(low=-noise_level, high=noise_level, size=len(observation))
-        else:
-            raise ValueError(f"Tipo di rumore '{noise_type}' non supportato.")
-        #print(f"PRE Noise {noise} Observation: {noisy_observations[i]}")
-        noisy_observations[i] += noise
-        #print(f"SOMMA Noise {noise} Observation: {noisy_observations[i]}")
-        # Mantieni le osservazioni originali dove necessario
-        noisy_observations[i][mask] = np.array(observations)[i][mask]
-        #print(f"POST Noise {noise} Observation: {noisy_observations[i]}")
+    if noise_type == 'gaussian':
+        noise = np.random.normal(loc=noise_mean, scale=noise_level, size=len(noisy_observations))
+    elif noise_type == 'uniform':
+        noise = np.random.uniform(low=-noise_level, high=noise_level, size=len(noisy_observations))
+    else:
+        raise ValueError(f"Tipo di rumore '{noise_type}' non supportato.")
+    noisy_observations += noise
+    # Mantieni le osservazioni originali dove necessario
+    noisy_observations[mask] = obs[mask]
     
     return noisy_observations
 
@@ -140,17 +142,12 @@ def test_rbc(env, n=1):
     kpis = cp.get_kpis(env)
     return kpis, env
 
-def train_sac(env, sac_model=None, n=1, batch_size=BATCH_SIZE, learning_starts=LEARNING_STARTS, episodes=EPISODES, seed=RANDOM_SEED, time_steps=None, track_rewards=False, eval_freq=1000, deterministic=True):
-    if sac_model is None:
-        sac_model = SAC(policy='MlpPolicy',
-                    env=env,
-                    **CUSTOM_AGENT_KWARGS,
-                    seed=seed,
-                    verbose=1)
-    else:
-        sac_model.set_env(env)
-        if batch_size != sac_model.batch_size:
-            sac_model.batch_size = batch_size
+def train_sac(env, n=1, batch_size=BATCH_SIZE, learning_starts=LEARNING_STARTS, episodes=EPISODES, seed=RANDOM_SEED, time_steps=None, track_rewards=False, eval_freq=1000, deterministic=True):
+    sac_model = SAC(policy='MlpPolicy',
+                env=env,
+                **CUSTOM_AGENT_KWARGS,
+                seed=seed,
+                verbose=1)
 
     if time_steps is None:
         time_steps = env.unwrapped.time_steps - 1

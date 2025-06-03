@@ -3,6 +3,7 @@ costanti condivise tra vari moduli.
 """
 
 # Configurazione dell'ambiente
+import random
 from citylearn.reward_function import SolarPenaltyAndComfortReward
 
 
@@ -22,12 +23,12 @@ ACTIVE_ACTIONS = ['electrical_storage', 'cooling_storage_soc', 'heating_storage_
 CENTRAL_AGENT = True
 
 # Altre costanti condivise
-EPISODES = 2
+EPISODES = 5
 SAVE_DIR = 'plots'
 UPDATE_FREQ = 75
 BATCH_SIZE = 256
 LEARNING_STARTS = 150
-RANDOM_SEED = 42
+RANDOM_SEED = random.randint(1, 1000)
 
 # Configurazione di ENV_CONFIG e ENV_CONFIG_2
 ENV_CONFIG = {

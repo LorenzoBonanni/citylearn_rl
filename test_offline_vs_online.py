@@ -5,6 +5,7 @@ Struttura più pulita e modulare rispetto a test_online_tuning.py
 
 from functools import partial
 from custom_function import *
+from constants import RANDOM_SEED  # Import RANDOM_SEED
 import os
 import numpy as np
 from gymnasium.wrappers import TransformObservation
@@ -31,7 +32,7 @@ def train_offline_models():
     print("\n1. Training modello NORMALE (baseline)")
     normal_env = CityLearnEnv(**ENV_CONFIG)
     normal_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(normal_env))
-    
+
     _, sac_normal, training_rewards_normal, timesteps_normal = train_sac(
         normal_env, 
         track_rewards=True,
@@ -47,14 +48,14 @@ def train_offline_models():
     
     print("\n2. Training modello con POCO RUMORE")
     noisy_env = CityLearnEnv(**ENV_CONFIG)
-    noisy_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(
-        TransformObservation(noisy_env, partial(
+    noisy_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(noisy_env))
+    observation, _ = noisy_env.reset()
+    noisy_env = TransformObservation(noisy_env, partial(
             add_noise_to_observations, 
             noise_type='gaussian', 
-            noise_level=0.50, 
-            noise_mean=1.0
+            noise_level=0.05, 
+            noise_mean=0.0
         ))
-    ))
     
     _, sac_noisy, training_rewards_noisy, timesteps_noisy = train_sac(
         noisy_env, 
@@ -71,14 +72,13 @@ def train_offline_models():
     
     print("\n3. Training modello con MOLTO RUMORE")
     more_noise_env = CityLearnEnv(**ENV_CONFIG)
-    more_noise_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(
-        TransformObservation(more_noise_env, partial(
+    more_noise_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(more_noise_env))
+    more_noise_env = TransformObservation(more_noise_env, partial(
             add_noise_to_observations, 
             noise_type='gaussian', 
-            noise_level=1.5, 
-            noise_mean=1.0
+            noise_level=0.15, 
+            noise_mean=0.0
         ))
-    ))
     
     _, sac_more_noise, training_rewards_more_noise, timesteps_more_noise = train_sac(
         more_noise_env,
@@ -95,14 +95,13 @@ def train_offline_models():
     
     print("\n4. Training modello con MEDIA MODIFICATA")
     noisy_mean_env = CityLearnEnv(**ENV_CONFIG)
-    noisy_mean_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(
-        TransformObservation(noisy_mean_env, partial(
+    noisy_mean_env = StableBaselines3Wrapper(NormalizedSpaceWrapper(noisy_mean_env))
+    noisy_mean_env = TransformObservation(noisy_mean_env, partial(
             add_noise_to_observations, 
             noise_type='gaussian', 
-            noise_level=1.50, 
-            noise_mean=3.0
+            noise_level=0.05, 
+            noise_mean=0.2
         ))
-    ))
     
     _, sac_noisy_mean, training_rewards_noisy_mean, timesteps_noisy_mean = train_sac(
         noisy_mean_env,
@@ -156,9 +155,9 @@ def apply_online_finetuning(models, target_env):
         online_results = simple_online_learning(
             env=target_env,
             model=finetuned_model,
-            update_freq=24, 
-            batch_size=36,    
-            gradient_steps=10, 
+            update_freq=4, 
+            batch_size=32,    
+            gradient_steps=5, 
             verbose=1
         )
         
@@ -268,17 +267,17 @@ def save_results(evaluation_results, training_data, online_training_data, save_d
     #cp.plot_post_training_rewards(evaluation_results, save_dir=save_dir)
     
     # 3. Grafici individuali per ogni modello fine-tuned
-    print("📈 Generando grafici fine-tuning individuali...")
-    for model_name, data in online_training_data.items():
-        online_results_single = {
-            'step_rewards': data['step_rewards'],
-            'total_reward': data['total_reward']
-        }
-        cp.plot_online_fine_tuning_simple(
-            online_results_single,
-            save_dir=save_dir,
-            title=f"Fine-tuning Online: {model_name.replace('_', ' ').title()}"
-        )
+    # print("📈 Generando grafici fine-tuning individuali...")
+    # for model_name, data in online_training_data.items():
+    #     online_results_single = {
+    #         'step_rewards': data['step_rewards'],
+    #         'total_reward': data['total_reward']
+    #     }
+    #     cp.plot_online_fine_tuning_simple(
+    #         online_results_single,
+    #         save_dir=save_dir,
+    #         title=f"Fine-tuning Online: {model_name.replace('_', ' ').title()}"
+    #     )
     
     # 4. Salva riepilogo testuale con calcolo miglioramento dettagliato
     print("📝 Generando riepilogo testuale...")
@@ -287,7 +286,8 @@ def save_results(evaluation_results, training_data, online_training_data, save_d
         f.write("="*80 + "\n")
         f.write("ESPERIMENTO: CONFRONTO OFFLINE vs ONLINE LEARNING\n")
         f.write("="*80 + "\n")
-        f.write(f"Data esperimento: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write(f"Data esperimento: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"RANDOM_SEED utilizzato: {RANDOM_SEED}\n\n")  # Aggiunto RANDOM_SEED
         
         f.write("RISULTATI MODELLI ORIGINALI (OFFLINE):\n")
         f.write("-" * 50 + "\n")
